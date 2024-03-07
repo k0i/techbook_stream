@@ -1,0 +1,9 @@
+version: '3.7'
+
+services:
+  materialized:
+    image: materialize/materialized:latest
+    container_name: materialized
+    ports:
+      - "6875:6875"
+      - "6876:6876"

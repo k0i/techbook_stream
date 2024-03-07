@@ -1,0 +1,25 @@
+[package]
+name = "materialized"
+version = "0.1.0"
+edition = "2021"
+default-run = "materialized"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web = "4.5.1"
+anyhow = "1.0.80"
+chrono = "0.4.34"
+futures = "0.3.30"
+postgres = { version = "0.19.7", features = ["with-chrono-0_4"] }
+reqwest = { version = "0.11.24", features = ["json"] }
+sea-orm = {version = "0.12.14", features = ["macros", "sqlx-postgres", "runtime-tokio-native-tls"] }
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
+tokio = { version = "1.36.0", features = ["full"] }
+tokio-postgres = "0.7.10"
+uuid = { version = "1.7.0", features = ["v4"] }
+
+[[bin]]
+name = "gen_trans"
+path = "src/generate_transaction.rs"
