@@ -23,6 +23,45 @@ pub async fn gen(gen_time: usize, amount: i64) -> Result<(), Box<dyn std::error:
 
     for _ in 0..gen_time {
         let uuid = Uuid::new_v4();
+        let data = json!({
+            "wallet_id": 1,
+            "amount": amount,
+            "transaction_id": uuid.to_string(),
+        });
+        tasks.push(tokio::spawn({
+            reqwest::Client::new()
+                .post("http://localhost:3000/transaction")
+                .header("Content-Type", "application/json")
+                .json(&data)
+                .send()
+        }));
+    }
+
+    while let Some(task) = tasks.next().await {
+        match task {
+            Ok(resp) => {
+                let resp = resp.expect("Error in response");
+                if resp.status().is_success() {
+                    let body = resp.text().await?;
+                    println!("balance: {:?}", body);
+                } else {
+                    println!("Error: {:?}", resp);
+                }
+            }
+            Err(e) => println!("Error: {e}"),
+        }
+    }
+
+    Ok(())
+}
+
+// this function directrly connect to materialize and insert data
+#[allow(dead_code)]
+async fn gen_direct(gen_time: usize, amount: i64) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tasks = FuturesUnordered::new();
+
+    for _ in 0..gen_time {
+        let uuid = Uuid::new_v4();
         let query = format!(
             "INSERT INTO transaction_events values(1, '{}', {}, now(), NULL)",
             uuid, amount
