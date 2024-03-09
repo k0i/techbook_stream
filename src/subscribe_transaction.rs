@@ -150,8 +150,7 @@ async fn process_event_stream(
 
     info!("Received Transaction Event: {:?}", last_transaction_id);
 
-    //  let wallet_id: i32 = row.try_get("wallet_id")?;
-    let wallet_id = 1;
+    let wallet_id: i32 = row.try_get("wallet_id")?;
     let balance: BigDecimal = row.try_get("balance")?;
     let transaction_event = TransactionEvent {
         wallet_id,
