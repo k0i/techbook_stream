@@ -17,6 +17,15 @@ struct TransactionRequest {
     amount: i64,
     transaction_id: TransactionID,
 }
+pub struct AppState {
+    stream_sender: tokio::sync::mpsc::Sender<(
+        WalletID,
+        TransactionID,
+        Amount,
+        tokio::sync::oneshot::Sender<Result<Amount>>,
+    )>,
+}
+
 #[post("/transaction")]
 async fn transaction(
     app_state: web::Data<AppState>,
@@ -44,14 +53,6 @@ async fn transaction(
     }
 }
 
-pub struct AppState {
-    stream_sender: tokio::sync::mpsc::Sender<(
-        WalletID,
-        TransactionID,
-        Amount,
-        tokio::sync::oneshot::Sender<Result<Amount>>,
-    )>,
-}
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // logger setup

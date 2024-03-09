@@ -11,6 +11,7 @@ use uuid::Uuid;
 pub type TransactionID = Uuid;
 pub type WalletID = i32;
 pub type Amount = BigDecimal;
+
 #[derive(Debug)]
 pub struct TransactionEvent {
     wallet_id: WalletID,
@@ -46,6 +47,7 @@ async fn _start_subscribe(
         Sender<Result<Amount>>,
     )>,
 ) -> Result<()> {
+    // TODO: replace single conn to connection pool
     let mut stream_conn = PgConnection::connect(
         "postgres://materialize@localhost:6875/materialize?options=--cluster quickstart",
     )
@@ -57,10 +59,14 @@ async fn _start_subscribe(
 
     let mut insert_conn =
         PgConnection::connect("postgres://materialize@localhost:6875/materialize").await?;
+    // materialize automatically routes transactions to mz_instrospection cluster
+    // we should disable this behavior
     stream_conn
         .execute("set auto_route_introspection_queries = false;")
         .await
         .expect("Failed to set auto_route_introspection_queries");
+
+    // TODO: manage the case when the transaction is timed out
     stream_conn
         .execute(
             "BEGIN;DECLARE c CURSOR for SUBSCRIBE (SELECT * from wallet_balance) \
@@ -69,8 +75,10 @@ async fn _start_subscribe(
         .await
         .expect("Failed to begin transaction");
 
+    // TODO: we need to iterate over this hashmap and notify the client before shutting down
     let mut responder_hashmap = std::collections::HashMap::new();
-    let mut buffer = Vec::with_capacity(100);
+
+    // channel that receives the stream events
     let (stream_chan_sender, mut stream_chan_receiver) = tokio::sync::mpsc::channel(100);
     let child_cancel_token = cancel_token.clone();
     let handle = tokio::spawn(async move {
@@ -90,19 +98,26 @@ async fn _start_subscribe(
     });
 
     let mut last_transaction_processed_time = NaiveDateTime::MIN;
+    let mut request_buffer = Vec::with_capacity(100);
+
     loop {
         tokio::select! {
+            // receive the cancellation signal
             _ = cancel_token.cancelled() => {
                 break;
             }
-            _ = event_responder.recv_many(&mut buffer, 100) => {
-                for row in buffer.drain(..) {
+            // receive new transaction requests
+            // insert the transaction into the transaction_events table
+            // it triggers stream events
+            _ = event_responder.recv_many(&mut request_buffer, 100) => {
+                for row in request_buffer.drain(..) {
                     let (wallet_id, transaction_id, amount, responder) = row;
                     responder_hashmap.insert((wallet_id, transaction_id), responder);
                     let query = format!("INSERT INTO transaction_events values({}, '{}', {}, now(), NULL)", wallet_id, transaction_id, amount);
                     insert_conn.execute(&*query).await?;
                 }
             }
+            // receive the stream events: inserted new events into the transaction_events table
             row = stream_chan_receiver.recv() => {
                 let row = row.expect("stream event receive failed");
                  process_event_stream(row, &mut responder_hashmap, &mut decline_conn,&mut last_transaction_processed_time).await?;
@@ -132,8 +147,12 @@ async fn process_event_stream(
     decline_conn: &mut PgConnection,
     last_transaction_processed_time: &mut NaiveDateTime,
 ) -> Result<StreamEventProcessResult> {
+    // transaction amount exceeds the wallet balance
     let declined = row.get::<Option<bool>, &str>("declined").map(|_| true);
+
+    // stream catches the change produced by the transaction but it doesn not contain the diff
     let mz_diff = row.get::<i64, &str>("mz_diff");
+
     let last_transaction_id: Uuid = row.try_get("last_transaction_id")?;
     let last_transaction_time: NaiveDateTime = row.try_get("last_transaction_time")?;
     if declined.is_some()
@@ -141,8 +160,6 @@ async fn process_event_stream(
         || last_transaction_time <= *last_transaction_processed_time
     {
         debug!("Stale event: {:?}", last_transaction_id);
-        // the change produced is due to compensation.
-        // we don't need to validate this transaction
         return Ok(StreamEventProcessResult::Stale);
     }
 
@@ -158,23 +175,25 @@ async fn process_event_stream(
         last_transaction_time,
         last_transaction_id,
     };
+
     match validate_transaction_event(&transaction_event) {
+        // balance is positive
         Ok(_) => {
             match responder_hashmap.remove(&(
                 transaction_event.wallet_id,
                 transaction_event.last_transaction_id,
             )) {
+                // there is a responder for this transaction: return response
                 Some(responder) => {
                     let _ = responder.send(Ok(transaction_event.balance));
                     Ok(StreamEventProcessResult::Ok)
                 }
+                // there are no responders for this transaction: we need to compensate
                 None => {
                     error!(
                         "No responder found:{:?}",
                         transaction_event.last_transaction_id
                     );
-                    // we don't have the responder for this transaction
-                    // we need to compensate
                     match compensate_transaction_event(decline_conn, &transaction_event).await {
                         Ok(_) => Ok(StreamEventProcessResult::NoResponder),
                         Err(e) => {
