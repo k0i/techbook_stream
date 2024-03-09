@@ -27,3 +27,7 @@ log = "0.4.21"
 [[bin]]
 name = "gen_trans"
 path = "src/generate_transaction.rs"
+
+[[bin]]
+name = "migrate"
+path = "src/migrate.rs"
