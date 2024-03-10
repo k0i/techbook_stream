@@ -55,6 +55,7 @@ async fn transaction(
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // console_subscriber::init();
     // logger setup
     env::set_var("RUST_LOG", "info");
     env_logger::init();
